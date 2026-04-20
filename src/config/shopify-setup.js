@@ -18,24 +18,76 @@
 
 require('dotenv').config();
 
-const SHOP    = process.env.SHOPIFY_STORE_DOMAIN; // e.g. lil-helper.myshopify.com
-const TOKEN   = process.env.SHOPIFY_ADMIN_TOKEN;  // Admin API access token
-const API_VER = '2024-10';
-const BASE    = `https://${SHOP}/admin/api/${API_VER}`;
+const SHOP = process.env.SHOPIFY_STORE_DOMAIN;
+const API_VER = '2026-04';
+const BASE = `https://${SHOP}/admin/api/${API_VER}`;
 
-const headers = {
-  'Content-Type': 'application/json',
-  'X-Shopify-Access-Token': TOKEN,
-};
+/**
+ * Get the access token, either from .env or by exchanging Client ID/Secret
+ */
+async function getHeaders() {
+  let token = process.env.SHOPIFY_ADMIN_TOKEN;
+
+  if (!token && process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET) {
+    console.log('🔄 SHOPIFY_ADMIN_TOKEN missing. Attempting to exchange Client ID/Secret...');
+
+    try {
+      const body = new URLSearchParams({
+        client_id: process.env.SHOPIFY_CLIENT_ID,
+        client_secret: process.env.SHOPIFY_CLIENT_SECRET,
+        grant_type: 'client_credentials'
+      });
+
+      const res = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      });
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        console.error('❌ Failed to parse JSON response. Raw response:');
+        console.error(text.substring(0, 500) + '...'); // Log first 500 chars
+        process.exit(1);
+      }
+
+      if (!res.ok) {
+        throw new Error(data.errors || data.error_description || 'Unknown error during token exchange');
+      }
+
+      token = data.access_token;
+      console.log('✅ Token obtained successfully!');
+    } catch (err) {
+      console.error('❌ Token exchange failed:', err.message);
+      process.exit(1);
+    }
+  }
+
+  if (!token) {
+    console.error('❌ Error: No authentication provided.');
+    console.error('   Please set SHOPIFY_ADMIN_TOKEN or both SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET in .env');
+    process.exit(1);
+  }
+
+  return {
+    'Content-Type': 'application/json',
+    'X-Shopify-Access-Token': token,
+    'User-Agent': 'SmartShip-Helper/1.0.0',
+  };
+}
 
 async function registerCarrierService() {
+  const headers = await getHeaders();
   const payload = {
     carrier_service: {
-      name:              'SmartShip — Lil Helper',
-      callback_url:      process.env.SMARTSHIP_PUBLIC_URL + '/api/carrier-service/rates',
-      service_discovery: true,   // Shopify caches rates — true = always call our endpoint
-      format:            'json',
-      active:            true,
+      name: 'SmartShip — Lil Helper',
+      callback_url: process.env.SMARTSHIP_PUBLIC_URL + '/api/carrier-service/rates',
+      service_discovery: true,
+      format: 'json',
+      active: true,
     },
   };
 
@@ -64,6 +116,7 @@ async function registerCarrierService() {
 }
 
 async function listCarrierServices() {
+  const headers = await getHeaders();
   const res = await fetch(`${BASE}/carrier_services.json`, { headers });
   const data = await res.json();
   console.log('Registered carrier services:');
@@ -71,16 +124,17 @@ async function listCarrierServices() {
 }
 
 async function deleteCarrierService(id) {
+  const headers = await getHeaders();
   const res = await fetch(`${BASE}/carrier_services/${id}.json`, { method: 'DELETE', headers });
   if (res.status === 200) console.log(`✅ Deleted carrier service ${id}`);
   else console.error('❌ Delete failed:', res.status);
 }
 
-const [,, command, arg] = process.argv;
+const [, , command, arg] = process.argv;
 switch (command) {
   case 'register': registerCarrierService(); break;
-  case 'list':     listCarrierServices();    break;
-  case 'delete':   deleteCarrierService(arg); break;
+  case 'list': listCarrierServices(); break;
+  case 'delete': deleteCarrierService(arg); break;
   default:
     console.log('Usage: node src/config/shopify-setup.js [register|list|delete <id>]');
 }
