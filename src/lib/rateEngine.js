@@ -1,62 +1,61 @@
 /**
- * SmartShip — Rate Engine (Consolidated)
+ * SmartShip — Rate Engine (v2026.04)
  */
 
 const { ZONES, RULES } = require('../config/rules');
 const { detectWarehouseSplit } = require('./warehouseDetector');
 
 // In-memory cache to prevent double-charging during split shipments
-// Key: destinationZip-orderTotal, Value: timestamp
 const transactionCache = new Map();
-const CACHE_TTL = 5000; // 5 seconds (Shopify calls happen within milliseconds)
+const CACHE_TTL = 10000; // 10 seconds
 
 async function evaluateRates(rateRequest) {
   const { destination, items, currency, origin, order_totals } = rateRequest;
 
-  const zone = resolveZone(destination.country);
-  const cartTotalCents = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const cartTotal = cartTotalCents / 100;
+  // 1. Calculate the price of the items in THIS specific box
+  const boxTotalCents = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const boxTotal = boxTotalCents / 100;
 
-  // Use Shopify's grand total (if available) for threshold checks (e.g. Free over $200)
-  const grandTotal = order_totals ? (order_totals.subtotal_price / 100) : cartTotal;
-  const totalWeightGrams = items.reduce((sum, item) => sum + (item.grams * item.quantity), 0);
+  // 2. Identify the GRAND TOTAL of the entire order (all boxes combined)
+  // Shopify sends total_price (discounted) and subtotal_price (pre-discount)
+  const grandTotal = order_totals ? (order_totals.total_price / 100) : boxTotal;
 
-  const { isSplit } = detectWarehouseSplit(items, origin);
+  // 3. Detect if this is a split shipment call
+  // If the box price is less than the grand total, it's a split.
+  const isSplitShipment = order_totals && (boxTotal < (grandTotal - 0.01));
 
-  // ─── CONSOLIDATION LOGIC ──────────────────────────────────────────────────
-  // If this is a split shipment, we only want to charge the $9.99 once.
-  let isConsolidatedCall = false;
+  // 4. Determine which warehouse is calling us
+  const { location } = detectWarehouseSplit(items, origin);
 
-  if (order_totals && (cartTotal < grandTotal)) {
-    // This is a split call. Generate a unique key for this specific customer checkout.
+  // 5. Consolidation Lock
+  let isSecondaryBox = false;
+  if (isSplitShipment) {
     const cacheKey = `${destination.postal_code}-${grandTotal}-${currency}`;
     const now = Date.now();
 
     if (transactionCache.has(cacheKey)) {
-      const lastCall = transactionCache.get(cacheKey);
-      if (now - lastCall < CACHE_TTL) {
-        isConsolidatedCall = true; // We already processed another part of this order
-      }
+      isSecondaryBox = true;
     } else {
       transactionCache.set(cacheKey, now);
-      // Clean up old cache entries occasionally
-      if (transactionCache.size > 100) transactionCache.clear();
+      // Clean up cache every 100 entries
+      if (transactionCache.size > 100) {
+        const threshold = now - CACHE_TTL;
+        for (let [key, val] of transactionCache) if (val < threshold) transactionCache.delete(key);
+      }
     }
   }
 
-  // Find rules based on the GRAND total (so $50 + $160 = $210 qualifies for Free Shipping)
+  // 6. Find matching rules based on the GRAND total
+  const zone = resolveZone(destination.country);
   const matchingRates = evaluateRules({
     zone,
     cartTotal: grandTotal,
-    totalWeightGrams,
-    isSplit: isSplit || (cartTotal < grandTotal),
+    isSplit: isSplitShipment,
     currency,
-    destination,
-    items,
   });
 
-  // If this is the SECOND or THIRD box in a split, return $0 for matching rates
-  if (isConsolidatedCall) {
+  // 7. If this is Box #2 or Box #3, return the rates with $0 price
+  if (isSecondaryBox) {
     return matchingRates.map(r => ({ ...r, price: 0 })).map(formatRate);
   }
 
@@ -70,43 +69,19 @@ function resolveZone(countryCode) {
   return 'international';
 }
 
-function evaluateRules({ zone, cartTotal, totalWeightGrams, isSplit, currency, destination, items }) {
-  const applicableRules = RULES.filter(rule => {
+function evaluateRules({ zone, cartTotal, isSplit }) {
+  return RULES.filter(rule => {
     if (rule.zone && rule.zone !== zone) return false;
     for (const condition of rule.conditions) {
-      if (!evaluateCondition(condition, { cartTotal, totalWeightGrams, isSplit })) return false;
+      let actual = (condition.field === 'price') ? cartTotal : (isSplit ? 1 : 0);
+      let threshold = parseFloat(condition.value);
+
+      if (condition.operator === 'gte' && actual < threshold) return false;
+      if (condition.operator === 'lt' && actual >= threshold) return false;
+      if (condition.operator === 'eq' && actual !== threshold) return false;
     }
     return true;
   });
-
-  if (isSplit && applicableRules.length > 0) return consolidate(applicableRules);
-  return applicableRules;
-}
-
-function evaluateCondition(condition, { cartTotal, totalWeightGrams, isSplit }) {
-  let actual;
-  switch (condition.field) {
-    case 'price': actual = cartTotal; break;
-    case 'weight_kg': actual = totalWeightGrams / 1000; break;
-    case 'is_split': actual = isSplit ? 1 : 0; break;
-    default: return true;
-  }
-  const threshold = parseFloat(condition.value);
-  switch (condition.operator) {
-    case 'gte': return actual >= threshold;
-    case 'lte': return actual <= threshold;
-    case 'gt': return actual > threshold;
-    case 'lt': return actual < threshold;
-    case 'eq': return actual === threshold;
-    default: return true;
-  }
-}
-
-function consolidate(rates) {
-  const freeRate = rates.find(r => r.type === 'free');
-  if (freeRate) return [freeRate];
-  const sorted = [...rates].sort((a, b) => a.price - b.price);
-  return [sorted[0]];
 }
 
 function formatRate(rule) {
@@ -115,10 +90,9 @@ function formatRate(rule) {
     service_code: rule.id,
     total_price: rule.price === 0 ? '0' : String(Math.round(rule.price * 100)),
     currency: rule.currency || 'USD',
-    min_delivery_date: rule.minDelivery || null,
-    max_delivery_date: rule.maxDelivery || null,
     description: rule.description || '',
-    phone_required: false,
+    min_delivery_date: rule.minDelivery || null,
+    max_delivery_date: rule.maxDelivery || null
   };
 }
 
