@@ -29,7 +29,7 @@ async function getHeaders() {
   let token = process.env.SHOPIFY_ADMIN_TOKEN;
 
   if (!token && process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET) {
-    console.log('🔄 SHOPIFY_ADMIN_TOKEN missing. Attempting to exchange Client ID/Secret...');
+    console.log('🔄 SHOPIFY_ADMIN_TOKEN missing.. Attempting to exchange Client ID/Secret...');
 
     try {
       const body = new URLSearchParams({
