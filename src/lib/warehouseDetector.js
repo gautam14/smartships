@@ -46,11 +46,11 @@ function detectWarehouseSplit(items, origin) {
 
   // 1. Check the origin of this specific request
   if (origin && origin.zip) {
-    const zip = String(origin.zip).substring(0, 5);
-    if (zip === '14225') locationSet.add('USA');
-    else if (zip === '518110') locationSet.add('China');
-    else if (zip === 'L5T 1S7') locationSet.add('Canada');
-    else locationSet.add('Canada'); // Fallback 
+    const zip = String(origin.zip).trim();
+    if (zip.startsWith('14225')) locationSet.add('USA');
+    else if (zip.startsWith('518110')) locationSet.add('China');
+    else if (zip.startsWith('L5T 1S7')) locationSet.add('Canada');
+    else locationSet.add('Canada'); // Fallback
   }
 
   // 2. Fallback to fulfillment_service handles for individual items
