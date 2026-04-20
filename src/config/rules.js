@@ -6,8 +6,8 @@
  *
  * ─────────────────────────────────────────────
  * CURRENT POLICY (as of Jan 2026):
- *   Canada:        < $99  → $9.99  |  ≥ $99  → Free  |  5–8 business days
- *   United States: < $99  → $9.99  |  ≥ $99  → Free  |  5–8 business days
+ *   Canada:        < $200 → $9.99  |  ≥ $200 → Free  |  5–8 business days
+ *   United States: < $200 → $9.99  |  ≥ $200 → Free  |  5–8 business days
  *   International: All orders → Calculated at checkout (subsidised)
  * ─────────────────────────────────────────────
  */
@@ -64,64 +64,64 @@ const RULES = [
   // ── CANADA ──────────────────────────────────────────────────────────────────
 
   {
-    id:          'ca-free',
-    name:        'Free Shipping',          // Shown at checkout
+    id: 'ca-free',
+    name: 'Free Shipping',          // Shown at checkout
     description: '5–8 business days',
-    zone:        'canada',
-    type:        'free',
-    price:       0,
-    currency:    'CAD',
+    zone: 'canada',
+    type: 'free',
+    price: 0,
+    currency: 'CAD',
     minDelivery: daysFromNow(5),
     maxDelivery: daysFromNow(8),
     conditions: [
-      { field: 'price', operator: 'gte', value: '99' },
+      { field: 'price', operator: 'gte', value: '200' },
     ],
   },
 
   {
-    id:          'ca-standard',
-    name:        'Standard Shipping',
+    id: 'ca-standard',
+    name: 'Standard Shipping',
     description: '5–8 business days',
-    zone:        'canada',
-    type:        'flat',
-    price:       9.99,
-    currency:    'CAD',
+    zone: 'canada',
+    type: 'flat',
+    price: 9.99,
+    currency: 'CAD',
     minDelivery: daysFromNow(5),
     maxDelivery: daysFromNow(8),
     conditions: [
-      { field: 'price', operator: 'lt', value: '99' },
+      { field: 'price', operator: 'lt', value: '200' },
     ],
   },
 
   // ── UNITED STATES ───────────────────────────────────────────────────────────
 
   {
-    id:          'us-free',
-    name:        'Free Shipping',
+    id: 'us-free',
+    name: 'Free Shipping',
     description: '5–8 business days',
-    zone:        'usa',
-    type:        'free',
-    price:       0,
-    currency:    'USD',
+    zone: 'usa',
+    type: 'free',
+    price: 0,
+    currency: 'USD',
     minDelivery: daysFromNow(5),
     maxDelivery: daysFromNow(8),
     conditions: [
-      { field: 'price', operator: 'gte', value: '99' },
+      { field: 'price', operator: 'gte', value: '200' },
     ],
   },
 
   {
-    id:          'us-standard',
-    name:        'Standard Shipping',
+    id: 'us-standard',
+    name: 'Standard Shipping',
     description: '5–8 business days',
-    zone:        'usa',
-    type:        'flat',
-    price:       9.99,
-    currency:    'USD',
+    zone: 'usa',
+    type: 'flat',
+    price: 9.99,
+    currency: 'USD',
     minDelivery: daysFromNow(5),
     maxDelivery: daysFromNow(8),
     conditions: [
-      { field: 'price', operator: 'lt', value: '99' },
+      { field: 'price', operator: 'lt', value: '200' },
     ],
   },
 
@@ -131,13 +131,13 @@ const RULES = [
   // replace this with a calculated rate — see docs/calculated-rates.md
 
   {
-    id:          'intl-standard',
-    name:        'International Shipping',
+    id: 'intl-standard',
+    name: 'International Shipping',
     description: 'Tracked. Delivery times vary by country.',
-    zone:        'international',
-    type:        'flat',
-    price:       19.99,    // ← Update this to match your subsidised rate
-    currency:    'CAD',
+    zone: 'international',
+    type: 'flat',
+    price: 19.99,    // ← Update this to match your subsidised rate
+    currency: 'CAD',
     minDelivery: daysFromNow(7),
     maxDelivery: daysFromNow(21),
     conditions: [],        // No conditions — applies to all international orders
