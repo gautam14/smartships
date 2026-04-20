@@ -41,20 +41,46 @@ async function evaluateRates(rateRequest) {
   }, 0);
 
   // Step 4: Detect if this order splits across multiple warehouses
-  const { isSplit, locations } = detectWarehouseSplit(items);
+  const { isSplit, locations } = detectWarehouseSplit(items, rateRequest.origin);
+
+  // CONSOLIDATION FIX (2026 Update):
+  // If Shopify split this into multiple calls, we only charge for the first one.
+  // Note: order_totals is a field added in late 2025/2026.
+  let isConsolidatedSplit = isSplit;
+  if (rateRequest.order_totals) {
+    const grandTotal = rateRequest.order_totals.subtotal / 100;
+    if (cartTotal < grandTotal) {
+      isConsolidatedSplit = true;
+      // If this is a split call, we evaluate based on the GRAND total (for free shipping)
+      cartTotal = grandTotal;
+    }
+  }
 
   // Step 5: Find all matching rules
   const matchingRates = evaluateRules({
     zone,
     cartTotal,
     totalWeightGrams,
-    isSplit,
+    isSplit: isConsolidatedSplit,
     currency,
     destination,
     items,
   });
 
-  // Step 6: Format for Shopify
+  // FINAL CONSOLIDATION GUARD:
+  // If this is a split call, and the customer already qualifies for a rate,
+  // we only return the price for the "Primary" warehouse (alphabetical) to avoid double charging.
+  if (isConsolidatedSplit && matchingRates.length > 0) {
+    // Determine if this specific warehouse should show the price
+    const primaryWarehouse = locations.sort()[0];
+    const currentWarehouse = locations[0]; // The one in this request
+
+    if (currentWarehouse !== primaryWarehouse) {
+      // Return the same rate but with $0 price for the second box
+      return matchingRates.map(r => ({ ...r, price: 0 })).map(formatRate);
+    }
+  }
+
   return matchingRates.map(formatRate);
 }
 
@@ -107,11 +133,11 @@ function evaluateCondition(condition, { cartTotal, totalWeightGrams, isSplit }) 
   let actual;
 
   switch (condition.field) {
-    case 'price':       actual = cartTotal; break;
-    case 'weight_kg':   actual = totalWeightGrams / 1000; break;
-    case 'weight_g':    actual = totalWeightGrams; break;
-    case 'is_split':    actual = isSplit ? 1 : 0; break;
-    default:            return true; // Unknown field — don't block
+    case 'price': actual = cartTotal; break;
+    case 'weight_kg': actual = totalWeightGrams / 1000; break;
+    case 'weight_g': actual = totalWeightGrams; break;
+    case 'is_split': actual = isSplit ? 1 : 0; break;
+    default: return true; // Unknown field — don't block
   }
 
   const threshold = parseFloat(condition.value);
@@ -119,10 +145,10 @@ function evaluateCondition(condition, { cartTotal, totalWeightGrams, isSplit }) 
   switch (condition.operator) {
     case 'gte': return actual >= threshold;
     case 'lte': return actual <= threshold;
-    case 'gt':  return actual > threshold;
-    case 'lt':  return actual < threshold;
-    case 'eq':  return actual === threshold;
-    default:    return true;
+    case 'gt': return actual > threshold;
+    case 'lt': return actual < threshold;
+    case 'eq': return actual === threshold;
+    default: return true;
   }
 }
 
@@ -149,12 +175,12 @@ function consolidate(rates) {
 function formatRate(rule) {
   return {
     service_name: rule.name,
-    service_code:  rule.id,
-    total_price:   rule.type === 'free' ? '0' : String(Math.round(rule.price * 100)),
-    currency:      rule.currency || 'CAD',
+    service_code: rule.id,
+    total_price: rule.type === 'free' ? '0' : String(Math.round(rule.price * 100)),
+    currency: rule.currency || 'CAD',
     min_delivery_date: rule.minDelivery || null,
     max_delivery_date: rule.maxDelivery || null,
-    description:   rule.description || '',
+    description: rule.description || '',
     phone_required: false,
   };
 }

@@ -27,36 +27,45 @@
  */
 const WAREHOUSE_MAP = {
   // Shopify fulfillment service value → warehouse label
-  'manual':              'Mississauga, ON',   // Shopify's default for your primary location
-  'lil-helper-canada':   'Mississauga, ON',   // If you've named it explicitly
-  'lil-helper-us':       'New York, NY',
-  // Add more as needed:
-  // 'china-warehouse':  'Shenzhen, CN',
+  'manual': 'Canada',
+  'canada-warehouse': 'Canada',
+  'usa-warehouse': 'USA',
+  'china-warehouse-shipsmartly': 'China',
 };
 
 /**
  * Detect whether a cart's items span more than one fulfillment location.
+ * Uses both fulfillment_service IDs and origin zip codes for accuracy.
  *
- * @param {Array} items - Shopify line items from the rate request
+ * @param {Array} items - Shopify line items
+ * @param {object} origin - Shopify origin object { country, zip, etc }
  * @returns {{ isSplit: boolean, locations: string[] }}
  */
-function detectWarehouseSplit(items) {
+function detectWarehouseSplit(items, origin) {
   const locationSet = new Set();
 
-  for (const item of items) {
-    // Only evaluate items that require shipping
-    if (!item.requires_shipping) continue;
+  // 1. Check the origin of this specific request
+  if (origin && origin.zip) {
+    const zip = String(origin.zip).substring(0, 5);
+    if (zip === '14225') locationSet.add('USA');
+    else if (zip === '518110') locationSet.add('China');
+    else if (zip === 'L5T 1S7') locationSet.add('Canada');
+    else locationSet.add('Canada'); // Fallback 
+  }
 
+  // 2. Fallback to fulfillment_service handles for individual items
+  for (const item of items) {
+    if (!item.requires_shipping) continue;
     const service = item.fulfillment_service || 'manual';
-    const warehouseLabel = WAREHOUSE_MAP[service] || service;
-    locationSet.add(warehouseLabel);
+    const warehouseLabel = WAREHOUSE_MAP[service] || null;
+    if (warehouseLabel) locationSet.add(warehouseLabel);
   }
 
   const locations = Array.from(locationSet);
   const isSplit = locations.length > 1;
 
   if (isSplit) {
-    console.log(`[SmartShip] Split order detected — locations: ${locations.join(', ')}`);
+    console.log(`[SmartShip] Split detected — locations in this request: ${locations.join(', ')}`);
   }
 
   return { isSplit, locations };

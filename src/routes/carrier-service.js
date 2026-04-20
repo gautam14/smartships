@@ -16,6 +16,9 @@ const { verifyShopifyHmac } = require('../lib/auth');
  * Mount at: app.post('/api/carrier-service/rates', carrierServiceHandler)
  */
 async function carrierServiceHandler(req, res) {
+  // DEBUG: See what Shopify is sending to handle consolidation
+  console.log('[SmartShip] Incoming Request Body:', JSON.stringify(req.body, null, 2));
+
   // 1. Verify this request actually came from Shopify
   const hmacValid = verifyShopifyHmac(req);
   if (!hmacValid) {
