@@ -9,7 +9,7 @@ async function carrierServiceHandler(req, res) {
   // Log incoming request for debugging
   console.log('\n━━━ INCOMING RATE REQUEST ━━━');
   console.log('Timestamp:', new Date().toISOString());
-  
+
   // 1. Verify HMAC
   const hmacValid = verifyShopifyHmac(req);
   if (!hmacValid) {
@@ -32,9 +32,10 @@ async function carrierServiceHandler(req, res) {
     console.log('Items:', rateRequest.items?.length || 0);
 
     // 2. Calculate rates
-    const rates = await evaluateRates(rateRequest);
+    const shopDomain = req.headers['x-shopify-shop-domain'] || 'unknown';
+    const rates = await evaluateRates(rateRequest, shopDomain);
 
-    console.log('Returning rates:', rates.map(r => `${r.service_name}: $${r.total_price/100}`).join(', '));
+    console.log('Returning rates:', rates.map(r => `${r.service_name}: $${r.total_price / 100}`).join(', '));
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
     // 3. Return to Shopify
