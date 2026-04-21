@@ -11,28 +11,30 @@ const SESSION_TTL = 30000; // 30 seconds
  * @param {string} shopDomain - The X-Shopify-Shop-Domain header
  */
 async function evaluateRates(rateRequest, shopDomain = 'unknown') {
-  const { destination, origin, items } = rateRequest;
+  const { destination, origin } = rateRequest;
 
   // Generate a stable session ID for this checkout.
   // We use destination + shopDomain because Shopify doesn't provide a checkout ID.
   const sessionId = generateSessionId(rateRequest, shopDomain);
 
-  // Determine if this is the first warehouse request for this checkout
-  const sessionStatus = activeCheckouts.get(sessionId);
-  const isFirstRequest = !sessionStatus;
+  // Determine if we should deduplicate (charge $0) or show the full price.
+  // We use a 3-second window: within a single page load, all warehouse requests 
+  // happen almost simultaneously. If a request comes in 3+ seconds later, 
+  // it's likely a page refresh, so we should show the full price again.
+  const lastPaidTimestamp = activeCheckouts.get(sessionId) || 0;
+  const now = Date.now();
+  const DEDUPE_WINDOW = 3000; // 3 seconds
 
-  if (isFirstRequest) {
-    // Mark this session as seen
-    activeCheckouts.set(sessionId, Date.now());
+  const isDeduplicated = (now - lastPaidTimestamp) < DEDUPE_WINDOW;
 
-    // Auto-cleanup after TTL
-    setTimeout(() => {
-      activeCheckouts.delete(sessionId);
-    }, SESSION_TTL);
-
-    console.log(`[SmartShip] NEW checkout session: ${sessionId} | Shop: ${shopDomain} | Origin: ${origin?.zip || 'unknown'}`);
+  if (!isDeduplicated) {
+    // This is either the first warehouse request or a fresh page load.
+    // Mark the timestamp so subsequent requests in this window return $0.
+    activeCheckouts.set(sessionId, now);
+    console.log(`[SmartShip] CHARGING checkout: ${sessionId} | Shop: ${shopDomain} | Origin: ${origin?.zip || 'unknown'}`);
   } else {
-    console.log(`[SmartShip] DUPLICATE request for session: ${sessionId} | Shop: ${shopDomain} | Origin: ${origin?.zip || 'unknown'} | Returning $0`);
+    // This is a near-simultaneous request for the same session (another warehouse).
+    console.log(`[SmartShip] DEDUPLICATING request: ${sessionId} | Shop: ${shopDomain} | Origin: ${origin?.zip || 'unknown'} | Returning $0`);
   }
 
   // Find the applicable rate based on destination country
@@ -44,10 +46,8 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
     return [];
   }
 
-  // Deduplication: Only the first warehouse request gets the actual price.
-  // All subsequent requests for the same session (other warehouses) return $0.
-  // This ensures the total shipping cost is equal to exactly one flat rate.
-  const effectivePrice = isFirstRequest ? rule.price : 0;
+  // Deduplication: Only the first request in the window gets the full price.
+  const effectivePrice = isDeduplicated ? 0 : rule.price;
 
   return [formatRate(rule, effectivePrice)];
 }
@@ -94,7 +94,7 @@ function formatRate(rule, price) {
     service_code: rule.id,
     total_price: String(Math.round(price * 100)), // Shopify wants cents as string
     currency: rule.currency,
-    description: price === 0 ? '(Consolidated Shipment)' : '',
+    description: '',
   };
 }
 
