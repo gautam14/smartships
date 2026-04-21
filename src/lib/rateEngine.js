@@ -1,99 +1,95 @@
 /**
- * SmartShip — Rate Engine (v2026.04)
+ * SmartShip — Rate Engine (Simplified for Flat Rates + Multi-Warehouse Deduplication)
+ * 
+ * THE PROBLEM:
+ * When you have 3 warehouses, Shopify sends 3 SEPARATE rate requests per checkout.
+ * Without deduplication, customer sees shipping charged 3 times.
+ * 
+ * THE SOLUTION:
+ * Track each unique checkout session. Only charge shipping for the FIRST warehouse request.
+ * All subsequent requests for the same checkout return $0 rates.
  */
 
 const { ZONES, RULES } = require('../config/rules');
-const { detectWarehouseSplit } = require('./warehouseDetector');
 
-// In-memory cache to prevent double-charging during split shipments
-const transactionCache = new Map();
-const CACHE_TTL = 10000; // 10 seconds
+// Session tracking: Maps checkout ID → timestamp of first request
+const activeCheckouts = new Map();
+const SESSION_TTL = 60000; // 60 seconds (plenty of time for all 3 warehouse calls)
 
+/**
+ * Main entry point
+ */
 async function evaluateRates(rateRequest) {
-  const { destination, items, currency, origin, order_totals } = rateRequest;
-
-  // 1. Calculate the price of the items in THIS specific box
-  const boxTotalCents = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const boxTotal = boxTotalCents / 100;
-
-  // 2. Identify the GRAND TOTAL of the entire order (all boxes combined)
-  // Shopify sends total_price (discounted) and subtotal_price (pre-discount)
-  const grandTotal = order_totals ? (order_totals.total_price / 100) : boxTotal;
-
-  // 3. Detect if this is a split shipment call
-  // If the box price is less than the grand total, it's a split.
-  const isSplitShipment = order_totals && (boxTotal < (grandTotal - 0.01));
-
-  // 4. Determine which warehouse is calling us
-  const { location } = detectWarehouseSplit(items, origin);
-
-  // 5. Consolidation Lock
-  let isSecondaryBox = false;
-  if (isSplitShipment) {
-    const cacheKey = `${destination.postal_code}-${grandTotal}-${currency}`;
-    const now = Date.now();
-
-    if (transactionCache.has(cacheKey)) {
-      isSecondaryBox = true;
-    } else {
-      transactionCache.set(cacheKey, now);
-      // Clean up cache every 100 entries
-      if (transactionCache.size > 100) {
-        const threshold = now - CACHE_TTL;
-        for (let [key, val] of transactionCache) if (val < threshold) transactionCache.delete(key);
-      }
-    }
+  const { destination, origin } = rateRequest;
+  
+  // Generate a unique session ID for this checkout
+  // Shopify sends a unique 'id' field per checkout session
+  const sessionId = rateRequest.id || generateFallbackSessionId(rateRequest);
+  
+  // Determine if this is the first warehouse request for this checkout
+  const isFirstRequest = !activeCheckouts.has(sessionId);
+  
+  if (isFirstRequest) {
+    // Mark this session as seen
+    activeCheckouts.set(sessionId, Date.now());
+    
+    // Auto-cleanup after TTL
+    setTimeout(() => {
+      activeCheckouts.delete(sessionId);
+    }, SESSION_TTL);
+    
+    console.log(`[SmartShip] NEW checkout session: ${sessionId} | Origin: ${origin?.zip || 'unknown'}`);
+  } else {
+    console.log(`[SmartShip] DUPLICATE request for session: ${sessionId} | Origin: ${origin?.zip || 'unknown'} | Returning $0`);
   }
-
-  // 6. Find matching rules based on the GRAND total
+  
+  // Find the applicable rate based on destination country
   const zone = resolveZone(destination.country);
-  const matchingRates = evaluateRules({
-    zone,
-    cartTotal: grandTotal,
-    isSplit: isSplitShipment,
-    currency,
-  });
-
-  // 7. If this is Box #2 or Box #3, return the rates with $0 price
-  if (isSecondaryBox) {
-    return matchingRates.map(r => ({ ...r, price: 0 })).map(formatRate);
+  const rule = RULES.find(r => r.zone === zone);
+  
+  if (!rule) {
+    console.warn(`[SmartShip] No rule found for zone: ${zone}`);
+    return [];
   }
-
-  return matchingRates.map(formatRate);
+  
+  // If this is NOT the first request, return a $0 version of the rate
+  const effectivePrice = isFirstRequest ? rule.price : 0;
+  
+  return [formatRate(rule, effectivePrice)];
 }
 
+/**
+ * Resolve destination country to zone
+ */
 function resolveZone(countryCode) {
   for (const [zoneId, zone] of Object.entries(ZONES)) {
-    if (zone.countries.includes(countryCode)) return zoneId;
+    if (zone.countries.includes(countryCode)) {
+      return zoneId;
+    }
   }
   return 'international';
 }
 
-function evaluateRules({ zone, cartTotal, isSplit }) {
-  return RULES.filter(rule => {
-    if (rule.zone && rule.zone !== zone) return false;
-    for (const condition of rule.conditions) {
-      let actual = (condition.field === 'price') ? cartTotal : (isSplit ? 1 : 0);
-      let threshold = parseFloat(condition.value);
-
-      if (condition.operator === 'gte' && actual < threshold) return false;
-      if (condition.operator === 'lt' && actual >= threshold) return false;
-      if (condition.operator === 'eq' && actual !== threshold) return false;
-    }
-    return true;
-  });
-}
-
-function formatRate(rule) {
+/**
+ * Format rate for Shopify
+ */
+function formatRate(rule, price) {
   return {
     service_name: rule.name,
     service_code: rule.id,
-    total_price: rule.price === 0 ? '0' : String(Math.round(rule.price * 100)),
-    currency: rule.currency || 'USD',
-    description: rule.description || '',
-    min_delivery_date: rule.minDelivery || null,
-    max_delivery_date: rule.maxDelivery || null
+    total_price: String(Math.round(price * 100)), // Shopify wants cents as string
+    currency: rule.currency,
+    description: '',
   };
+}
+
+/**
+ * Fallback session ID generator (if Shopify doesn't send 'id')
+ */
+function generateFallbackSessionId(req) {
+  const { destination, items } = req;
+  const itemsHash = items.map(i => `${i.sku}-${i.quantity}`).join('|');
+  return `${destination.postal_code}-${itemsHash}-${Date.now()}`;
 }
 
 module.exports = { evaluateRates };
