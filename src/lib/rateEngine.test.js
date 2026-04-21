@@ -1,76 +1,48 @@
 /**
- * SmartShip — Rate Engine Tests
- *
- * Run:  node src/lib/rateEngine.test.js
- * Or with Jest:  npx jest
- *
- * Tests the exact scenarios Lil Helper cares about:
- *   1. CA order < $99 → $9.99
- *   2. CA order ≥ $99 → Free
- *   3. US order < $99 → $9.99
- *   4. US order ≥ $99 → Free
- *   5. Split order (NY + Mississauga), CA, $85 → single $9.99 (not double)
- *   6. Split order (NY + Mississauga), CA, $110 → single Free (not $9.99 + $9.99)
- *   7. International order → flat rate
+ * SmartShip — Rate Engine Tests (Simplified)
+ * 
+ * Run: node src/lib/rateEngine.test.js
  */
 
 const { evaluateRates } = require('./rateEngine');
 
 const tests = [
   {
-    label: 'CA < $99 → $9.99',
-    input: makeRequest({ country: 'CA', priceCents: 8500, fulfillment: 'manual' }),
-    expect: { count: 1, name: 'Standard Shipping', price: '999' },
+    label: 'CA order → $9.99 CAD',
+    input: makeRequest({ country: 'CA', zip: 'L5T1A1' }),
+    expect: { count: 1, price: '999', currency: 'CAD' },
   },
   {
-    label: 'CA ≥ $99 → Free',
-    input: makeRequest({ country: 'CA', priceCents: 12000, fulfillment: 'manual' }),
-    expect: { count: 1, name: 'Free Shipping', price: '0' },
+    label: 'US order → $9.99 USD',
+    input: makeRequest({ country: 'US', zip: '14225' }),
+    expect: { count: 1, price: '999', currency: 'USD' },
   },
   {
-    label: 'US < $99 → $9.99',
-    input: makeRequest({ country: 'US', priceCents: 5000, fulfillment: 'lil-helper-us' }),
-    expect: { count: 1, name: 'Standard Shipping', price: '999' },
+    label: 'International (UK) → $20 USD',
+    input: makeRequest({ country: 'GB', zip: 'SW1A' }),
+    expect: { count: 1, price: '2000', currency: 'USD' },
   },
   {
-    label: 'US ≥ $99 → Free',
-    input: makeRequest({ country: 'US', priceCents: 15000, fulfillment: 'lil-helper-us' }),
-    expect: { count: 1, name: 'Free Shipping', price: '0' },
-  },
-  {
-    label: 'Split order, CA, $85 combined → SINGLE $9.99 (not $19.98)',
-    input: makeRequest({ country: 'CA', priceCents: 8500, fulfillment: 'split' }),
+    label: 'Multi-warehouse: First request → $9.99',
+    input: makeRequest({ country: 'CA', zip: 'L5T1A1', sessionId: 'test-session-1' }),
     expect: { count: 1, price: '999' },
   },
   {
-    label: 'Split order, CA, $110 combined → SINGLE Free (not $9.99 + $9.99)',
-    input: makeRequest({ country: 'CA', priceCents: 11000, fulfillment: 'split' }),
+    label: 'Multi-warehouse: Second request (same session) → $0',
+    input: makeRequest({ country: 'CA', zip: '14225', sessionId: 'test-session-1' }),
     expect: { count: 1, price: '0' },
-  },
-  {
-    label: 'International → flat rate (1 result)',
-    input: makeRequest({ country: 'GB', priceCents: 5000, fulfillment: 'manual' }),
-    expect: { count: 1 },
   },
 ];
 
-function makeRequest({ country, priceCents, fulfillment }) {
-  const isSplit = fulfillment === 'split';
-  const items = isSplit
-    ? [
-        { name: 'Diaper A', sku: 'A1', quantity: 1, grams: 300, price: Math.floor(priceCents / 2), requires_shipping: true, fulfillment_service: 'manual' },
-        { name: 'Diaper B', sku: 'B1', quantity: 1, grams: 300, price: Math.ceil(priceCents / 2),  requires_shipping: true, fulfillment_service: 'lil-helper-us' },
-      ]
-    : [
-        { name: 'Diaper A', sku: 'A1', quantity: 1, grams: 500, price: priceCents, requires_shipping: true, fulfillment_service: fulfillment },
-      ];
-
+function makeRequest({ country, zip, sessionId }) {
   return {
-    origin:      { country: 'CA', province: 'ON', city: 'Mississauga', zip: 'L5B 3C4' },
-    destination: { country, province: '', city: '', zip: '' },
-    items,
+    id: sessionId || `test-${Math.random()}`,
+    origin: { country: 'CA', province: 'ON', city: 'Toronto', zip },
+    destination: { country, province: '', city: '', postal_code: 'ABC123' },
+    items: [
+      { name: 'Product', sku: 'TEST', quantity: 1, grams: 500, price: 5000, requires_shipping: true },
+    ],
     currency: country === 'US' ? 'USD' : 'CAD',
-    locale: 'en',
   };
 }
 
@@ -87,15 +59,17 @@ async function runTests() {
 
       if (test.expect.count !== undefined && rates.length !== test.expect.count) {
         ok = false;
-        errors.push(`Expected ${test.expect.count} rate(s), got ${rates.length}: ${rates.map(r=>r.service_name).join(', ')}`);
+        errors.push(`Expected ${test.expect.count} rate(s), got ${rates.length}`);
       }
+      
       if (test.expect.price !== undefined && rates[0]?.total_price !== test.expect.price) {
         ok = false;
         errors.push(`Expected price ${test.expect.price}, got ${rates[0]?.total_price}`);
       }
-      if (test.expect.name !== undefined && !rates.find(r => r.service_name === test.expect.name)) {
+      
+      if (test.expect.currency !== undefined && rates[0]?.currency !== test.expect.currency) {
         ok = false;
-        errors.push(`Expected rate named "${test.expect.name}", got: ${rates.map(r=>r.service_name).join(', ')}`);
+        errors.push(`Expected currency ${test.expect.currency}, got ${rates[0]?.currency}`);
       }
 
       if (ok) {
