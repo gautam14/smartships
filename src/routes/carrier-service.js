@@ -25,16 +25,24 @@ async function carrierServiceHandler(req, res) {
       return res.status(400).json({ error: 'Missing rate request body' });
     }
 
-    // Log key request details
-    console.log('Session ID:', rateRequest.id || 'MISSING');
-    console.log('Origin ZIP:', rateRequest.origin?.zip || 'unknown');
-    console.log('Destination:', `${rateRequest.destination?.country} ${rateRequest.destination?.postal_code || ''}`);
-    console.log('Items:', rateRequest.items?.length || 0);
+    // Calculate subtotal for this shipment
+    const subtotalCents = (rateRequest.items || []).reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    const subtotalFormatted = (subtotalCents / 100).toFixed(2);
+
+    // Detect Warehouse
+    const zip = rateRequest.origin?.zip || '';
+    let warehouse = 'Canada';
+    if (zip.startsWith('14225')) warehouse = 'USA';
+    else if (zip.startsWith('51811')) warehouse = 'China';
+    else if (zip.startsWith('L5T')) warehouse = 'Canada';
+    else warehouse = `Other (${zip || 'Unknown'})`;
 
     // 2. Calculate rates
     const shopDomain = req.headers['x-shopify-shop-domain'] || 'unknown';
     const rates = await evaluateRates(rateRequest, shopDomain);
 
+    // Log Summary
+    console.log(`[Summary] Warehouse: ${warehouse} | Shipment Subtotal: $${subtotalFormatted}`);
     console.log('Returning rates:', rates.map(r => `${r.service_name}: $${r.total_price / 100}`).join(', '));
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
@@ -48,4 +56,3 @@ async function carrierServiceHandler(req, res) {
 }
 
 module.exports = { carrierServiceHandler };
- 
