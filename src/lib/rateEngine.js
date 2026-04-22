@@ -12,34 +12,46 @@ const SESSION_TTL = 30000; // 30 seconds
  */
 async function evaluateRates(rateRequest, shopDomain = 'unknown') {
   try {
-    const { destination, origin, items = [] } = rateRequest;
+    const { origin, items = [] } = rateRequest;
 
-    if (!destination || !destination.country) {
-      console.error(`[SmartShip] ❌ MISSING destination in request from ${shopDomain}`);
+    // Shopify sometimes sends 'country_code' instead of 'country'
+    const dest = rateRequest.destination || {};
+    const country = dest.country || dest.country_code;
+
+    if (!country) {
+      console.error(`[SmartShip] ❌ MISSING country in destination from ${shopDomain}`);
       console.log('Payload:', JSON.stringify(rateRequest));
       return [];
     }
 
-    // Generate a stable session ID for this checkout.
+    const destination = { ...dest, country }; // Ensure 'country' exists for downstream
+
+    // Generate a readable shorthand ID for easier debugging (e.g. BILLER-39743)
+    const lastName = (destination.name || 'GUEST').split(' ').pop().toUpperCase();
+    const zip = (destination.postal_code || '00000').toUpperCase().replace(/\s/g, '');
+    const readableId = `${lastName}-${zip}`;
+
+    // Generate a stable session ID for the internal Map (more precise than the readable one)
     const sessionId = generateSessionId(rateRequest, shopDomain);
 
     // DEDUPLICATION WINDOW LOGIC
     const lastPaidTimestamp = activeCheckouts.get(sessionId) || 0;
     const now = Date.now();
-    const DEDUPE_WINDOW = 3000; // 3 seconds
+    const DEDUPE_WINDOW = 5000; // 5 seconds
 
     const isDeduplicated = (now - lastPaidTimestamp) < DEDUPE_WINDOW;
 
     if (!isDeduplicated) {
       activeCheckouts.set(sessionId, now);
-      console.log(`\n[SmartShip] 🔥 PRIMARY WAREHOUSE (First request) | Session: ${sessionId}`);
+      console.log(`\n[SmartShip] 🔥 PRIMARY WAREHOUSE | Session: ${readableId}`);
     } else {
-      console.log(`\n[SmartShip] ♻️  SPLIT WAREHOUSE (Deduplicated)   | Session: ${sessionId}`);
+      console.log(`\n[SmartShip] ♻️  SPLIT WAREHOUSE   | Session: ${readableId}`);
     }
 
     // High-level log for debugging
-    console.log(`    Origin: ${origin?.zip} | Dest: ${destination.country} ${destination.postal_code || ''}`);
-    console.log(`    Items:  ${items.length} units | Currency: ${rateRequest.currency}`);
+    const customerName = destination.name || 'Guest Customer';
+    console.log(`    Customer: ${customerName} (${destination.province || ''}, ${destination.country})`);
+    console.log(`    Origin: ${origin?.zip || origin?.postal_code || 'Unknown'} | Items: ${items.length} units | Currency: ${rateRequest.currency}`);
 
     // Find the applicable rate based on destination country
     const zone = resolveZone(destination.country);
