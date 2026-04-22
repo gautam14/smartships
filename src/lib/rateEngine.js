@@ -11,45 +11,57 @@ const SESSION_TTL = 30000; // 30 seconds
  * @param {string} shopDomain - The X-Shopify-Shop-Domain header
  */
 async function evaluateRates(rateRequest, shopDomain = 'unknown') {
-  const { destination, origin } = rateRequest;
+  try {
+    const { destination, origin, items = [] } = rateRequest;
 
-  // Generate a stable session ID for this checkout.
-  // We use destination + shopDomain because Shopify doesn't provide a checkout ID.
-  const sessionId = generateSessionId(rateRequest, shopDomain);
+    if (!destination || !destination.country) {
+      console.error(`[SmartShip] ❌ MISSING destination in request from ${shopDomain}`);
+      console.log('Payload:', JSON.stringify(rateRequest));
+      return [];
+    }
 
-  // Determine if we should deduplicate (charge $0) or show the full price.
-  // We use a 3-second window: within a single page load, all warehouse requests 
-  // happen almost simultaneously. If a request comes in 3+ seconds later, 
-  // it's likely a page refresh, so we should show the full price again.
-  const lastPaidTimestamp = activeCheckouts.get(sessionId) || 0;
-  const now = Date.now();
-  const DEDUPE_WINDOW = 3000; // 3 seconds
+    // Generate a stable session ID for this checkout.
+    const sessionId = generateSessionId(rateRequest, shopDomain);
 
-  const isDeduplicated = (now - lastPaidTimestamp) < DEDUPE_WINDOW;
+    // DEDUPLICATION WINDOW LOGIC
+    const lastPaidTimestamp = activeCheckouts.get(sessionId) || 0;
+    const now = Date.now();
+    const DEDUPE_WINDOW = 3000; // 3 seconds
 
-  if (!isDeduplicated) {
-    // This is either the first warehouse request or a fresh page load.
-    // Mark the timestamp so subsequent requests in this window return $0.
-    activeCheckouts.set(sessionId, now);
-    console.log(`[SmartShip] CHARGING checkout: ${sessionId} | Shop: ${shopDomain} | Origin: ${origin?.zip || 'unknown'}`);
-  } else {
-    // This is a near-simultaneous request for the same session (another warehouse).
-    console.log(`[SmartShip] DEDUPLICATING request: ${sessionId} | Shop: ${shopDomain} | Origin: ${origin?.zip || 'unknown'} | Returning $0`);
-  }
+    const isDeduplicated = (now - lastPaidTimestamp) < DEDUPE_WINDOW;
 
-  // Find the applicable rate based on destination country
-  const zone = resolveZone(destination.country);
-  const rule = RULES.find(r => r.zone === zone);
+    if (!isDeduplicated) {
+      activeCheckouts.set(sessionId, now);
+      console.log(`\n[SmartShip] 🔥 NEW CHARGE | Session: ${sessionId} | Shop: ${shopDomain}`);
+    } else {
+      console.log(`\n[SmartShip] ♻️  DEDUPLICATED | Session: ${sessionId} | Shop: ${shopDomain}`);
+    }
 
-  if (!rule) {
-    console.warn(`[SmartShip] No rule found for zone: ${zone}`);
+    // High-level log for debugging
+    console.log(`    Origin: ${origin?.zip} | Dest: ${destination.country} ${destination.postal_code || ''}`);
+    console.log(`    Items:  ${items.length} units | Currency: ${rateRequest.currency}`);
+
+    // Find the applicable rate based on destination country
+    const zone = resolveZone(destination.country);
+    const rule = RULES.find(r => r.zone === zone);
+
+    if (!rule) {
+      console.error(`[SmartShip] ❌ No rule found for zone: ${zone} (Country Code: ${destination.country})`);
+      return [];
+    }
+
+    // Deduplication: Only the first request in the window gets the full price.
+    const effectivePrice = isDeduplicated ? 0 : rule.price;
+    const finalRate = formatRate(rule, effectivePrice);
+
+    console.log(`    Returning: ${finalRate.service_name} at $${finalRate.total_price / 100}`);
+
+    return [finalRate];
+
+  } catch (err) {
+    console.error('[SmartShip] ❌ CRITICAL ERROR in evaluateRates:', err);
     return [];
   }
-
-  // Deduplication: Only the first request in the window gets the full price.
-  const effectivePrice = isDeduplicated ? 0 : rule.price;
-
-  return [formatRate(rule, effectivePrice)];
 }
 
 /**
@@ -74,11 +86,14 @@ function generateSessionId(req, shopDomain) {
 }
 
 /**
- * Resolve destination country to zone
+ * Resolve destination country to zone (case-insensitive)
  */
 function resolveZone(countryCode) {
+  if (!countryCode) return 'international';
+  const code = String(countryCode).toUpperCase();
+
   for (const [zoneId, zone] of Object.entries(ZONES)) {
-    if (zone.countries.includes(countryCode)) {
+    if (zone.countries.includes(code)) {
       return zoneId;
     }
   }
