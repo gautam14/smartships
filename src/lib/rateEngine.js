@@ -34,18 +34,30 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
     // Generate a stable session ID for the internal Map (more precise than the readable one)
     const sessionId = generateSessionId(rateRequest, shopDomain);
 
-    // DEDUPLICATION WINDOW LOGIC
-    const lastPaidTimestamp = activeCheckouts.get(sessionId) || 0;
+    // DEDUPLICATION WINDOW LOGIC (Origin-Aware)
+    // We only return $0 if this is a DIFFERENT warehouse than the one we already charged.
+    const sessionData = activeCheckouts.get(sessionId);
     const now = Date.now();
     const DEDUPE_WINDOW = 5000; // 5 seconds
 
-    const isDeduplicated = (now - lastPaidTimestamp) < DEDUPE_WINDOW;
+    // Determine the unique key for this warehouse origin
+    const originKey = `${origin?.country || ''}-${origin?.zip || origin?.postal_code || 'Main'}`;
+
+    let isDeduplicated = false;
+    if (sessionData && (now - sessionData.timestamp) < DEDUPE_WINDOW) {
+      // If we already charged a DIFFERENT origin, then this is a split shipment.
+      if (sessionData.originKey !== originKey) {
+        isDeduplicated = true;
+      }
+    }
 
     if (!isDeduplicated) {
-      activeCheckouts.set(sessionId, now);
-      console.log(`\n[SmartShip] 🔥 PRIMARY WAREHOUSE | Session: ${readableId}`);
+      // Either a new session, or a re-calculation for the SAME warehouse.
+      activeCheckouts.set(sessionId, { timestamp: now, originKey });
+      console.log(`\n[SmartShip] 🔥 PRIMARY WAREHOUSE | Session: ${readableId} | Origin: ${originKey}`);
     } else {
-      console.log(`\n[SmartShip] ♻️  SPLIT WAREHOUSE   | Session: ${readableId}`);
+      // This is a truly separate warehouse (Split Shipment).
+      console.log(`\n[SmartShip] ♻️  SPLIT WAREHOUSE   | Session: ${readableId} | Origin: ${originKey} (Deduplicated)`);
     }
 
     // High-level log for debugging
