@@ -13,9 +13,10 @@ async function carrierServiceHandler(req, res) {
   // 1. Verify HMAC
   const hmacValid = verifyShopifyHmac(req);
   if (!hmacValid) {
-    console.error('[SmartShip] ❌ HMAC verification failed');
+    console.warn('[SmartShip] ⚠️  HMAC Auth Failed (Request rejected)');
     return res.status(401).json({ error: 'Unauthorized' });
   }
+  console.log('[SmartShip] ✅ Auth Verified');
 
   try {
     const { rate: rateRequest } = req.body;
