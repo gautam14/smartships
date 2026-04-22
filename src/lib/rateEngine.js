@@ -32,9 +32,9 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
 
     if (!isDeduplicated) {
       activeCheckouts.set(sessionId, now);
-      console.log(`\n[SmartShip] 🔥 NEW CHARGE | Session: ${sessionId} | Shop: ${shopDomain}`);
+      console.log(`\n[SmartShip] 🔥 PRIMARY WAREHOUSE (First request) | Session: ${sessionId}`);
     } else {
-      console.log(`\n[SmartShip] ♻️  DEDUPLICATED | Session: ${sessionId} | Shop: ${shopDomain}`);
+      console.log(`\n[SmartShip] ♻️  SPLIT WAREHOUSE (Deduplicated)   | Session: ${sessionId}`);
     }
 
     // High-level log for debugging
