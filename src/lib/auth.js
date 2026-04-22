@@ -27,14 +27,13 @@ function verifyShopifyHmac(req) {
   const secret = process.env.SHOPIFY_API_SECRET;
 
   if (!secret) {
-    console.warn('[SmartShip] WARNING: SHOPIFY_API_SECRET not set. Skipping HMAC verification.');
-    // In development you may want to return true here. NEVER do this in production.
+    console.error('[SmartShip] ❌ HMAC Auth Error: SHOPIFY_API_SECRET missing in .env');
     return process.env.NODE_ENV !== 'production';
   }
 
   const receivedHmac = req.headers['x-shopify-hmac-sha256'];
   if (!receivedHmac) {
-    console.warn('[SmartShip] No HMAC header on request');
+    console.warn('[SmartShip] ⚠️  HMAC Auth Error: No HMAC header on request');
     return false;
   }
 
