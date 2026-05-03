@@ -63,6 +63,9 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
     // High-level log for debugging
     const customerName = destination.name || 'Guest Customer';
     console.log(`    Customer: ${customerName} (${destination.province || ''}, ${destination.country})`);
+    const email = destination.email || rateRequest.email;
+    const emailLog = email ? ` | Email: ${email}` : '';
+    console.log(`    Customer: ${customerName} (${destination.province || ''}, ${destination.country}) ${emailLog}`);
     console.log(`    Origin: ${origin?.zip || origin?.postal_code || 'Unknown'} | Items: ${items.length} units | Currency: ${rateRequest.currency}`);
 
     // Find the applicable rate based on destination country
