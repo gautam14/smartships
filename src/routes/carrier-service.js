@@ -39,7 +39,7 @@ async function carrierServiceHandler(req, res) {
     const subtotalFormatted = (subtotalCents / 100).toFixed(2);
 
     // Detect Warehouse
-    const zip = rateRequest.origin?.zip || '';
+    const zip = rateRequest.origin?.zip || rateRequest.origin?.postal_code || '';
     let warehouse = 'Canada';
     if (zip.startsWith('14225')) warehouse = 'USA';
     else if (zip.startsWith('51811')) warehouse = 'China';
