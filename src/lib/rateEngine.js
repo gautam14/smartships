@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { ZONES, RULES } = require('../config/rules');
+const logger = require('./logger');
 
 // Session tracking: Maps destination hash → timestamp of first request
 const activeCheckouts = new Map();
@@ -10,7 +11,7 @@ const SESSION_TTL = 30000; // 30 seconds
  * @param {Object} rateRequest - The rate request from Shopify
  * @param {string} shopDomain - The X-Shopify-Shop-Domain header
  */
-async function evaluateRates(rateRequest, shopDomain = 'unknown') {
+async function evaluateRates(rateRequest, shopDomain = 'unknown', meta = {}) {
   try {
     const { origin, items = [] } = rateRequest;
 
@@ -21,6 +22,11 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
     if (!country) {
       console.error(`[SmartShip] ❌ MISSING country in destination from ${shopDomain}`);
       console.log('Payload:', JSON.stringify(rateRequest));
+      logger.error(`BACKUP RATE TRIGGERED - Missing country in destination`, {
+        ...meta,
+        shop: shopDomain,
+        destination: JSON.stringify(dest),
+      });
       return [];
     }
 
@@ -74,6 +80,12 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
 
     if (!rule) {
       console.error(`[SmartShip] ❌ No rule found for zone: ${zone} (Country Code: ${destination.country})`);
+      logger.error(`BACKUP RATE TRIGGERED - No rule for zone`, {
+        ...meta,
+        shop: shopDomain,
+        zone,
+        country: destination.country,
+      });
       return [];
     }
 
@@ -87,6 +99,12 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown') {
 
   } catch (err) {
     console.error('[SmartShip] ❌ CRITICAL ERROR in evaluateRates:', err);
+    logger.error(`BACKUP RATE TRIGGERED - evaluateRates threw`, {
+      ...meta,
+      shop: shopDomain,
+      error: err.message,
+      stack: err.stack,
+    });
     return [];
   }
 }
