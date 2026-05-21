@@ -40,8 +40,15 @@ function write(level, message, meta = {}) {
 
   const line = `[${ts}] [${rid}] [${level}]${extra} ${message}`;
 
-  const stream = getStream();
-  stream.write(line + '\n');
+  // Write to file (local dev / persistent storage)
+  try {
+    const stream = getStream();
+    stream.write(line + '\n');
+  } catch { /* silent */ }
+
+  // Write to stdout/stderr (Railway captures this in dashboard)
+  const dest = level === 'ERROR' ? process.stderr : process.stdout;
+  dest.write(`[SmartShip] [${rid}] [${level}] ${message}${metaStr}${metaCustomer}${metaDest}${metaOrigin}\n`);
 
   return rid;
 }
