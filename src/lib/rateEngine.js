@@ -47,7 +47,8 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown', meta = {}) {
     const DEDUPE_WINDOW = 5000; // 5 seconds
 
     // Determine the unique key for this warehouse origin
-    const originKey = `${origin?.country || ''}-${origin?.zip || origin?.postal_code || 'Main'}`;
+    // const originKey = `${origin?.country || ''}-${origin?.zip || origin?.postal_code || 'Main'}`;
+    const originKey = `${origin?.country || ''}-${(origin?.zip || origin?.postal_code || 'Main').replace(/\s/g, '')}`;
 
     let isDeduplicated = false;
     if (sessionData && (now - sessionData.timestamp) < DEDUPE_WINDOW) {
