@@ -28,9 +28,9 @@ const tests = [
     expect: { count: 1, price: '999' },
   },
   {
-    label: 'Multi-warehouse: Second request (same session) → $0',
+    label: 'Multi-warehouse: Second request (different origin) → skipped (no duplicate charge)',
     input: makeRequest({ country: 'CA', zip: '14225', sessionId: 'test-session-1' }),
-    expect: { count: 1, price: '0' },
+    expect: { count: 0 },
   },
 ];
 
