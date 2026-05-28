@@ -1,5 +1,10 @@
+const crypto = require('crypto');
 const { ZONES, RULES } = require('../config/rules');
 const logger = require('./logger');
+
+const activeCheckouts = new Map();
+const SESSION_TTL = 30000;
+const DEDUPE_WINDOW = 5000;
 
 async function evaluateRates(rateRequest, shopDomain = 'unknown', meta = {}) {
   try {
@@ -25,9 +30,25 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown', meta = {}) {
     const zip = (destination.postal_code || '00000').toUpperCase().replace(/\s/g, '');
     const readableId = `${lastName}-${zip}`;
 
+    const sessionId = generateSessionId(rateRequest, shopDomain);
     const originKey = `${origin?.country || ''}-${(origin?.zip || origin?.postal_code || 'Main').replace(/\s/g, '')}`;
 
-    console.log(`\n[SmartShip] 🔥 WAREHOUSE | Session: ${readableId} | Origin: ${originKey}`);
+    const sessionData = activeCheckouts.get(sessionId);
+    const now = Date.now();
+
+    let isDeduplicated = false;
+    if (sessionData && (now - sessionData.timestamp) < DEDUPE_WINDOW) {
+      if (sessionData.originKey !== originKey) {
+        isDeduplicated = true;
+      }
+    }
+
+    if (!isDeduplicated) {
+      activeCheckouts.set(sessionId, { timestamp: now, originKey });
+      console.log(`\n[SmartShip] 🔥 PRIMARY WAREHOUSE | Session: ${readableId} | Origin: ${originKey}`);
+    } else {
+      console.log(`\n[SmartShip] ♻️  SPLIT WAREHOUSE   | Session: ${readableId} | Origin: ${originKey} (Deduplicated)`);
+    }
 
     const customerName = destination.name || 'Guest Customer';
     console.log(`    Customer: ${customerName} (${destination.province || ''}, ${destination.country})`);
@@ -50,6 +71,11 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown', meta = {}) {
       return [];
     }
 
+    if (isDeduplicated) {
+      console.log(`    Skipping: Split warehouse — rate already returned for this session`);
+      return [];
+    }
+
     const finalRate = formatRate(rule, rule.price);
 
     console.log(`    Returning: ${finalRate.service_name} at $${finalRate.total_price / 100}`);
@@ -66,6 +92,23 @@ async function evaluateRates(rateRequest, shopDomain = 'unknown', meta = {}) {
     });
     return [];
   }
+}
+
+function generateSessionId(req, shopDomain) {
+  const { destination, currency } = req;
+  const d = destination || {};
+
+  const identityString = [
+    shopDomain,
+    (d.country || '').toUpperCase(),
+    (d.province || '').toUpperCase(),
+    (d.city || '').toLowerCase().trim(),
+    (d.postal_code || '').toUpperCase().replace(/\s/g, ''),
+    (d.address1 || '').toLowerCase().trim(),
+    currency
+  ].join('|');
+
+  return crypto.createHash('md5').update(identityString).digest('hex');
 }
 
 function resolveZone(countryCode) {
