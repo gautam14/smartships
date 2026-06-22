@@ -43,7 +43,7 @@ const RULES = [
   },
   {
     id: 'intl-flat',
-    name: 'International Shipping',
+    name: 'International Shipping (12-15 Business Days)',
     zone: 'international',
     price: 20.00,
     currency: 'USD',
